@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SkyCast AI</title>
+<meta name="description" content="An AI weather outlook for any city, up to a year ahead. Ask when it will snow, get colder or rain.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column instrument panel. Question first, answer, then the year strip chart. */
+:root{
+  --bg:#eef2f6; --panel:#ffffff; --ink:#15202b; --muted:#5b6b7b; --line:#d5dee8;
+  --warm:#d9603b; --cold:#2f6fb8; --snow:#7fb4e6; --rain:#3b8f8a; --band:rgba(217,96,59,.14);
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0e141b; --panel:#151e28; --ink:#e6edf4; --muted:#93a4b6; --line:#253343;
+  --warm:#f08a63; --cold:#6ea8ec; --snow:#a9d1ff; --rain:#5cc2b9; --band:rgba(240,138,99,.16); color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--body)}
+main{max-width:980px;margin:0 auto;padding:28px 16px 60px;display:grid;gap:18px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font:700 30px/1 var(--display);margin:0;letter-spacing:-.01em}
+h1 span{color:var(--cold)}
+h2{font:700 18px/1.2 var(--display);margin:0 0 8px}
+.sub{color:var(--muted);font-size:13px;max-width:52ch}
+form{display:flex;gap:8px}
+input{flex:1;min-width:0;font:16px var(--body);padding:13px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+input:focus{outline:2px solid var(--cold);outline-offset:1px}
+button{font:500 15px var(--body);padding:0 18px;border:0;border-radius:10px;background:var(--ink);color:var(--bg);cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+button:focus-visible,.chip:focus-visible,.unit:focus-visible{outline:2px solid var(--cold);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:space-between}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:13px var(--body);padding:5px 10px;border:1px solid var(--line);border-radius:99px;background:transparent;color:var(--muted);cursor:pointer}
+.chip:hover{color:var(--ink);border-color:var(--muted)}
+.units{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.unit{font:500 12px var(--mono);padding:5px 10px;background:transparent;color:var(--muted);border:0;border-radius:0}
+.unit[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.answer{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;font-size:16.5px}
+.answer .place{font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.answer.loading{color:var(--muted)}
+.bar{height:4px;background:var(--line);border-radius:4px;margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--cold);transition:width .3s}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font:12px var(--mono);color:var(--muted);margin-bottom:8px}
+.legend i{display:inline-block;width:12px;height:3px;vertical-align:middle;margin-right:5px}
+canvas{width:100%;height:340px;display:block}
+.tip{font:13px var(--mono);min-height:1.6em;margin-top:6px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;font-size:13px;color:var(--muted)}
+.facts b{display:block;font:500 15px var(--mono);color:var(--ink)}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px 28px;font-size:14px;color:var(--muted)}
+.how p{margin:0}.how strong{color:var(--ink);font-weight:500}
+footer{font-size:12px;color:var(--muted)}
+footer a{color:inherit}
+@media (prefers-reduced-motion:reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SkyCast <span>AI</span></h1>
+    <div class="sub">An AI that learns each city's weather from 45+ years of daily data, the latest observations, live forecast models and NOAA's El Niño index, then looks a full year ahead.</div>
+  </header>
+
+  <form id="f">
+    <input id="q" autocomplete="off" placeholder="Ask anything, e.g. when is it gonna snow in Denver" aria-label="Your question">
+    <button type="submit" id="go">Ask</button>
+  </form>
+  <div class="row">
+    <div class="chips" id="chips"></div>
+    <div class="units" role="group" aria-label="Units">
+      <button class="unit" id="uf" type="button" aria-pressed="true">°F</button>
+      <button class="unit" id="uc" type="button" aria-pressed="false">°C</button>
+    </div>
+  </div>
+
+  <div class="answer" id="answer"><div class="place">Ready</div>Ask about snow, rain, cold snaps, warm ups, the first freeze, or the weather on any date in the next year, for any city on Earth. The first question about a city takes 20 to 40 seconds while the AI downloads its history and trains in your browser. After that it's instant.</div>
+
+  <section class="panel" id="chartPanel" hidden>
+    <h2 id="chartTitle">Next 12 months</h2>
+    <div class="legend">
+      <span><i style="background:var(--warm)"></i>forecast high</span>
+      <span><i style="background:var(--cold)"></i>forecast low</span>
+      <span><i style="background:var(--muted);height:1px"></i>normal high</span>
+      <span><i style="background:var(--band);height:8px"></i>likely range of the high</span>
+      <span><i style="background:var(--snow);height:8px"></i>snow chance</span>
+      <span><i style="background:var(--rain);height:8px"></i>rain chance</span>
+    </div>
+    <canvas id="c" aria-label="Twelve month outlook chart"></canvas>
+    <div class="tip" id="tip">Hover or tap the chart for any day.</div>
+  </section>
+
+  <section class="facts" id="facts" hidden></section>
+
+  <section class="panel">
+    <h2>How it works</h2>
+    <div class="how">
+      <p><strong>Crawls on every visit.</strong> Pulls daily history since 1980 (ECMWF ERA5), the last 92 days of observations and the 16 day live forecast (NOAA GFS, ECMWF, DWD ICON), and NOAA's El Niño / La Niña index.</p>
+      <p><strong>Learns each city.</strong> Gradient boosted decision trees study about 100,000 examples of "the weather looked like this, what happened h days later?" for every lead time up to a year, and retrain daily.</p>
+      <p><strong>Tests itself honestly.</strong> Before trusting itself it forecasts the last three years blind and compares against 30 year normals. Where it can't beat normals, it leans on them.</p>
+      <p><strong>Corrects its own mistakes.</strong> Every outlook is logged. When those days arrive it measures its error and adjusts. Specific dates are reliable for about two weeks; beyond that, read answers as likely windows.</p>
+    </div>
+  </section>
+
+  <footer>Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (ERA5, GFS, ECMWF, ICON), <a href="https://www.cpc.ncep.noaa.gov/" target="_blank" rel="noopener">NOAA Climate Prediction Center</a>. Everything runs in your browser.</footer>
+</main>
+
+<script src="app.js"></script>
+<script src="qa.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const examples = ["when is it gonna snow in Denver", "when is it gonna get colder in Chicago", "will it rain in Seattle this weekend",
+  "how cold will Minneapolis get in January", "when will it warm up in Boston", "first freeze in Grand Rapids"];
+for (const t of examples) { const b = document.createElement("button"); b.className = "chip"; b.type = "button"; b.textContent = t;
+  b.onclick = () => { $("#q").value = t; ask(t); }; $("#chips").append(b); }
+
+let current = null, lastQuestion = "", forceUnits = null, lastCityQuery = null;
+const setUnits = f => { forceUnits = f; $("#uf").setAttribute("aria-pressed", f === "f"); $("#uc").setAttribute("aria-pressed", f === "c");
+  if (current) { show(lastQuestion); } };
+$("#uf").onclick = () => setUnits("f"); $("#uc").onclick = () => setUnits("c");
+$("#f").addEventListener("submit", e => { e.preventDefault(); const t = $("#q").value.trim(); if (t) ask(t); });
+
+function status(label, frac) {
+  const a = $("#answer"); a.className = "answer loading";
+  a.innerHTML = '<div class="place">Working</div><span id="st"></span><div class="bar"><i id="pb"></i></div>';
+  $("#st").textContent = label;
+  $("#pb").style.width = (frac == null ? 8 : Math.round(5 + 95 * frac)) + "%";
+}
+
+async function ask(text) {
+  const cityQ = parseCity(text) || lastCityQuery;
+  if (!cityQ) { setAnswer("SkyCast", "Which city? Try something like: when is it gonna snow in Denver"); return; }
+  $("#go").disabled = true;
+  try {
+    current = await getOutlook(cityQ, status);
+    lastCityQuery = cityQ; lastQuestion = text;
+    show(text);
+  } catch (err) {
+    setAnswer(/find a place/.test(err.message) ? "Place not found" : "Couldn't answer that", err.message || String(err));
+  } finally { $("#go").disabled = false; }
+}
+
+function setAnswer(head, body) {
+  const a = $("#answer"); a.className = "answer"; a.innerHTML = "";
+  const p = document.createElement("div"); p.className = "place"; p.textContent = head;
+  a.append(p, document.createTextNode(body));
+}
+
+function show(text) {
+  const { text: ans, u } = answer(text, current, forceUnits);
+  if (!forceUnits) { $("#uf").setAttribute("aria-pressed", u.imperial); $("#uc").setAttribute("aria-pressed", !u.imperial); }
+  setAnswer(place(current.city), ans);
+  draw(u); facts();
+}
+
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function draw(u) {
+  $("#chartPanel").hidden = false;
+  $("#chartTitle").textContent = `${place(current.city)}: next 12 months`;
+  const rows = current.rows, n = rows.length, unit = u.imperial ? "°F" : "°C";
+  const cv = $("#c"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  const L = 40, R = 8, T = 18, barH = 54, B = 22, chartB = H - B - barH - 20;
+  const c = r => ({ hi: u.conv(r.tmax), lo: u.conv(r.tmin), a: u.conv(r.hiLo), b: u.conv(r.hiHi), nh: u.conv(r.normHi) });
+  const cr = rows.map(c), step = u.imperial ? 10 : 5;
+  const lo = Math.floor(Math.min(...cr.map(r => Math.min(r.lo, r.a))) / step) * step, hi = Math.ceil(Math.max(...cr.map(r => r.b)) / step) * step;
+  const x = i => L + (W - L - R) * i / (n - 1), y = v => T + (chartB - T) * (1 - (v - lo) / (hi - lo));
+  g.font = "11px " + css("--mono"); g.lineWidth = 1;
+  for (let v = lo; v <= hi; v += step) { g.strokeStyle = css("--line"); g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
+    g.fillStyle = css("--muted"); g.fillText(v + "°", 4, y(v) + 4); }
+  let lastLabel = -99;
+  rows.forEach((r, i) => { if (r.date.endsWith("-01")) {
+    g.strokeStyle = css("--line"); g.beginPath(); g.moveTo(x(i), T); g.lineTo(x(i), H - B); g.stroke();
+    if (x(i) - lastLabel > 30) { g.fillStyle = css("--muted"); g.fillText(D(r.date).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }), x(i) + 3, H - 6); lastLabel = x(i); } } });
+  g.fillStyle = css("--band"); g.beginPath();
+  cr.forEach((r, i) => i ? g.lineTo(x(i), y(r.b)) : g.moveTo(x(i), y(r.b)));
+  for (let i = n - 1; i >= 0; i--) g.lineTo(x(i), y(cr[i].a)); g.closePath(); g.fill();
+  const line = (k, col, w, dash) => { g.strokeStyle = col; g.lineWidth = w; g.setLineDash(dash || []); g.beginPath();
+    cr.forEach((r, i) => i ? g.lineTo(x(i), y(r[k])) : g.moveTo(x(i), y(r[k]))); g.stroke(); g.setLineDash([]); };
+  line("nh", css("--muted"), 1, [3, 3]); line("lo", css("--cold"), 1.6); line("hi", css("--warm"), 1.8);
+  const liveEnd = rows.findIndex(r => r.source === "AI");
+  if (liveEnd > 0) { g.strokeStyle = css("--muted"); g.setLineDash([2, 3]); g.beginPath(); g.moveTo(x(liveEnd), T); g.lineTo(x(liveEnd), chartB); g.stroke(); g.setLineDash([]);
+    g.fillStyle = css("--muted"); g.fillText("live forecast blend | AI outlook", Math.max(L, x(liveEnd) - 118), T - 6); }
+  const by = H - B - barH, bw = Math.max(1, (W - L - R) / n);
+  g.fillStyle = css("--muted"); g.fillText("100%", 4, by + 8); g.fillText("0%", 4, by + barH);
+  rows.forEach((r, i) => {
+    g.globalAlpha = .45; g.fillStyle = css("--rain"); g.fillRect(x(i) - bw / 2, by + barH * (1 - r.pRain), bw, barH * r.pRain);
+    g.globalAlpha = 1; g.fillStyle = css("--snow"); g.fillRect(x(i) - bw / 2, by + barH * (1 - r.pSnow), bw, barH * r.pSnow); });
+  const hover = clientX => { const rect = cv.getBoundingClientRect();
+    const i = Math.max(0, Math.min(n - 1, Math.round((clientX - rect.left - L) / (W - L - R) * (n - 1)))), r = rows[i], k = cr[i];
+    $("#tip").textContent = `${fmtDay(r.date)}   high ${Math.round(k.hi)}${unit} (likely ${Math.round(k.a)} to ${Math.round(k.b)})   low ${Math.round(k.lo)}${unit}   rain ${Math.round(r.pRain * 100)}%   snow ${Math.round(r.pSnow * 100)}%`; };
+  cv.onmousemove = e => hover(e.clientX);
+  cv.ontouchstart = cv.ontouchmove = e => { if (e.touches[0]) hover(e.touches[0].clientX); };
+}
+
+function facts() {
+  const f = $("#facts"), m = current.model; f.hidden = false; f.innerHTML = "";
+  const sk = b => { const s = m.skill.find(x => x.bucket === b); if (!s || !s.n) return "n/a";
+    const gain = Math.round((1 - s.ai / s.norm) * 100); return gain >= 2 ? `${gain}% more accurate than normals` : "about as good as normals"; };
+  const oni = current.oni, enso = oni == null ? "unavailable" : (oni >= .5 ? "El Niño " : oni <= -.5 ? "La Niña " : "Neutral ") + `(${oni.toFixed(1)})`;
+  [["Learned from", `${m.years} years, ${m.examples.toLocaleString()} examples`],
+   ["Observations through", fmtDay(current.lastObs)],
+   ["Backtest, 1 to 3 days out", sk("1-3")],
+   ["Backtest, 3 to 6 weeks out", sk("17-45")],
+   ["El Niño state (NOAA)", enso],
+   ["Self checks on this device", current.checks.toLocaleString()],
+  ].forEach(([a, b]) => { const d = document.createElement("div"), s = document.createElement("b"); s.textContent = b; d.append(s, document.createTextNode(a)); f.append(d); });
+}
+addEventListener("resize", () => current && draw(units(current.city, forceUnits)));
+</script>
+</body>
+</html>
